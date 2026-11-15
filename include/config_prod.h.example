@@ -1,0 +1,16 @@
+#pragma once
+
+// Copy to config_prod.h and fill in secrets (gitignored).
+
+[[maybe_unused]] static const char *WIFI_SSID = "your-ssid";
+[[maybe_unused]] static const char *WIFI_PASS = "your-password";
+
+[[maybe_unused]] static const char *INGEST_URL =
+    "http://192.168.45.131:8110/api/moisture/ingest";
+[[maybe_unused]] static const char *DEVICE_ID = "moisture01";
+[[maybe_unused]] static const char *DEVICE_INGEST_TOKEN =
+    "replace-with-device-ingest-token";
+
+// Fallback ADC calibration until portal Apply (dry > wet).
+[[maybe_unused]] static const int ADC_DRY_DEFAULT = 3000;
+[[maybe_unused]] static const int ADC_WET_DEFAULT = 1400;
