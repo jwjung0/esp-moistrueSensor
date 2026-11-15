@@ -18,19 +18,17 @@ Board: `esp32-c3-devkitm-1` (C3 SuperMini / DevKit). Sensor: Capacitive Soil Moi
 
 ## Setup
 
-Create gitignored `include/config_local.h` and/or `include/config_prod.h` with:
+Create gitignored `include/config.h` with:
 
-- `WIFI_SSID`, `WIFI_PASS`
-- `INGEST_URL` — e.g. `http://<host>:8110/api/moisture/ingest`
-- `DEVICE_ID`, `DEVICE_INGEST_TOKEN`
-- `ADC_DRY_DEFAULT`, `ADC_WET_DEFAULT` (fallback until portal Apply)
+`INGEST_URL`, `DEVICE_ID`, `DEVICE_INGEST_TOKEN`, `ADC_DRY_DEFAULT`, `ADC_WET_DEFAULT`.
+
+Home Wi‑Fi SSID/password are **not** in `config.h` — set them from your phone on the SoftAP portal (saved in NVS).
 
 ```bash
-pio run -e esp32c3_local -t upload
+./scripts/build.sh
+./scripts/flash.sh
 pio device monitor
 ```
-
-Prod: `pio run -e esp32c3_prod -t upload`
 
 ## Duty cycle
 
@@ -46,17 +44,18 @@ First upload waits until one full batch has accumulated. Ingest must be a multip
 
 On each read: VCC on → 300 ms settle → discard 4 samples → trimmed mean of 16 → VCC off. Duty-cycle path also applies 1% hysteresis vs last stored %.
 
-## Calibration portal
+## SoftAP setup portal
 
-1. Hold **BOOT** ~2 s at reset/wake.
-2. Join SoftAP `Moisture-XXXX`, open `http://192.168.4.1/`.
-3. If calib never Applied: banner **“Calibration not set…”**.
-4. **Intervals** panel: set read / ingest minutes (defaults 10 / 60) → **Apply intervals**.
-5. **Calibrate Dry** (air) / **Calibrate Wet** (water to max line): 20 s timer, skip first 3 s, average ADC → draft value.
-6. **Apply calibration** → NVS (`dry > wet` required).
-7. **Exit** → resume duty cycle (ring reset).
+Opens automatically if home Wi‑Fi is not configured yet, or when you hold **BOOT** ~2 s at wake.
 
-Until Apply, firmware uses `ADC_DRY_DEFAULT` / `ADC_WET_DEFAULT` from config for % math, but portal still shows uninitiated.
+1. Join SoftAP `Moisture-XXXX`, open `http://192.168.4.1/`.
+2. **Home Wi‑Fi**: enter SSID/password → **Apply Wi‑Fi** (needed so the device can reach the ingest server on your LAN).
+3. **Intervals**: read / ingest minutes (defaults 10 / 60) → **Apply intervals**.
+4. If calib never Applied: banner **“Calibration not set…”**.
+5. **Calibrate Dry** / **Wet** (20 s each) → **Apply calibration**.
+6. **Exit** → resume duty cycle.
+
+SoftAP is only for phone setup. Hourly ingest uses home Wi‑Fi (STA).
 
 ## Ingest contract
 

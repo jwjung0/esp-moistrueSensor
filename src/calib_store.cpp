@@ -1,12 +1,6 @@
 #include "calib_store.h"
 
-#if defined(INGEST_ENV_LOCAL)
-#include "config_local.h"
-#elif defined(INGEST_ENV_PROD)
-#include "config_prod.h"
-#else
-#error "Build with INGEST_ENV_LOCAL or INGEST_ENV_PROD"
-#endif
+#include "config.h"
 
 #include <Preferences.h>
 

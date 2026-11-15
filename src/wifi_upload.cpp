@@ -1,16 +1,10 @@
 #include "wifi_upload.h"
 
-#if defined(INGEST_ENV_LOCAL)
-#include "config_local.h"
-#elif defined(INGEST_ENV_PROD)
-#include "config_prod.h"
-#else
-#error "Build with INGEST_ENV_LOCAL or INGEST_ENV_PROD"
-#endif
-
 #include "calib_store.h"
+#include "config.h"
 #include "led.h"
 #include "sample_store.h"
+#include "wifi_creds.h"
 
 #include <HTTPClient.h>
 #include <WiFi.h>
@@ -28,14 +22,21 @@ static String iso8601Utc(time_t t) {
 }
 
 static bool connectSta() {
+  if (!wifiCredsConfigured()) {
+    Serial.println("WiFi creds missing — use SoftAP portal");
+    return false;
+  }
+  const String ssid = wifiCredsSsid();
+  const String pass = wifiCredsPass();
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.begin(ssid.c_str(), pass.c_str());
   const uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < kStaTimeoutMs) {
     delay(100);
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("WiFi OK IP=%s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("WiFi OK ssid=%s IP=%s\n", ssid.c_str(),
+                  WiFi.localIP().toString().c_str());
     return true;
   }
   Serial.println("WiFi connect failed");

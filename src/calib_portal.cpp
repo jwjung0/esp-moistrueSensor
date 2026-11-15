@@ -4,6 +4,7 @@
 #include "calib_store.h"
 #include "led.h"
 #include "moisture_sensor.h"
+#include "wifi_creds.h"
 
 #include <WebServer.h>
 #include <WiFi.h>
@@ -28,12 +29,21 @@ static int gDraftWet = -1;
 static String gMessage;
 static uint32_t gLastActivityMs = 0;
 
-static int effectiveDry() {
-  return gDraftDry >= 0 ? gDraftDry : calibAdcDry();
-}
+static int effectiveDry() { return gDraftDry >= 0 ? gDraftDry : calibAdcDry(); }
 
-static int effectiveWet() {
-  return gDraftWet >= 0 ? gDraftWet : calibAdcWet();
+static int effectiveWet() { return gDraftWet >= 0 ? gDraftWet : calibAdcWet(); }
+
+static String jsonEscape(const String &in) {
+  String out;
+  out.reserve(in.length() + 8);
+  for (size_t i = 0; i < in.length(); ++i) {
+    const char c = in[i];
+    if (c == '"' || c == '\\') {
+      out += '\\';
+    }
+    out += c;
+  }
+  return out;
 }
 
 static const char *PAGE_HTML = R"HTML(
@@ -42,9 +52,9 @@ static const char *PAGE_HTML = R"HTML(
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Moisture Calib</title>
+<title>Moisture Setup</title>
 <style>
-  :root { --bg:#0f1410; --fg:#e8f0e6; --muted:#8aa08a; --acc:#3d9a5f; --warn:#c9a227; --bad:#c44; }
+  :root { --bg:#0f1410; --fg:#e8f0e6; --muted:#8aa08a; --acc:#3d9a5f; --warn:#c9a227; }
   * { box-sizing:border-box; }
   body { margin:0; font-family:ui-sans-serif,system-ui,sans-serif; background:var(--bg); color:var(--fg); }
   main { max-width:420px; margin:0 auto; padding:1.25rem; }
@@ -60,13 +70,28 @@ static const char *PAGE_HTML = R"HTML(
   .big { font-size:1.6rem; font-variant-numeric:tabular-nums; }
   .err { color:#ffb4b4; font-size:.85rem; margin-top:.5rem; }
   label { display:block; color:var(--muted); font-size:.8rem; margin:.5rem 0 .25rem; }
-  input[type=number] { width:100%; padding:.55rem .65rem; border-radius:8px; border:1px solid #2a332b; background:#0f1410; color:var(--fg); font-size:1rem; }
+  input[type=number], input[type=text], input[type=password] {
+    width:100%; padding:.55rem .65rem; border-radius:8px; border:1px solid #2a332b;
+    background:#0f1410; color:var(--fg); font-size:1rem;
+  }
 </style>
 </head>
 <body>
 <main>
   <h1>Soil moisture setup</h1>
+  <div id="wifiBanner" class="banner" hidden></div>
   <div id="banner" class="banner" hidden></div>
+  <div class="card">
+    <div class="meta"><strong>Home Wi‑Fi</strong> (for ingest uploads)</div>
+    <label for="ssid">SSID</label>
+    <input id="ssid" type="text" maxlength="32" autocomplete="off"/>
+    <label for="wpass">Password</label>
+    <input id="wpass" type="password" maxlength="63" autocomplete="off"/>
+    <div class="meta" id="wifiHint" style="margin-top:.5rem"></div>
+    <div class="row" style="margin-top:.75rem">
+      <button class="primary" id="btnWifi" onclick="applyWifi()">Apply Wi‑Fi</button>
+    </div>
+  </div>
   <div class="card">
     <div class="meta"><strong>Intervals</strong> (minutes)</div>
     <label for="readMin">Data read interval</label>
@@ -81,7 +106,6 @@ static const char *PAGE_HTML = R"HTML(
   <div class="card">
     <div class="meta">Live ADC</div>
     <div class="big" id="live">—</div>
-    <div class="meta" id="livePct"></div>
     <div class="meta" id="timer"></div>
   </div>
   <div class="card">
@@ -98,15 +122,24 @@ static const char *PAGE_HTML = R"HTML(
     <button class="primary" id="btnApply" onclick="apply()">Apply calibration</button>
     <button id="btnExit" onclick="exitPortal()">Exit</button>
   </div>
-  <div class="meta">Dry: probe in air. Wet: to max line in water (not electronics). Each run averages ~20s (skips first 3s). Ingest must be a multiple of read (batch ≤ 24).</div>
+  <div class="meta">Join this SoftAP from your phone, set home Wi‑Fi for uploads, then calibrate. Ingest must be a multiple of read (batch ≤ 24).</div>
   <div class="err" id="err"></div>
 </main>
 <script>
 let intervalsLoaded=false;
+let wifiLoaded=false;
 async function refresh(){
   try{
     const r=await fetch('/api/status');
     const j=await r.json();
+    const wb=document.getElementById('wifiBanner');
+    if(!j.wifi_configured){
+      wb.hidden=false; wb.className='banner';
+      wb.textContent='Home Wi‑Fi not set — enter SSID/password, then Apply Wi‑Fi.';
+    }else{
+      wb.hidden=false; wb.className='banner ok';
+      wb.textContent='Home Wi‑Fi saved ('+j.wifi_ssid+').';
+    }
     const b=document.getElementById('banner');
     if(!j.initiated){
       b.hidden=false; b.className='banner';
@@ -115,6 +148,13 @@ async function refresh(){
       b.hidden=false; b.className='banner ok';
       b.textContent='Calibration saved in device memory.';
     }
+    if(!wifiLoaded){
+      document.getElementById('ssid').value=j.wifi_ssid||'';
+      wifiLoaded=true;
+    }
+    document.getElementById('wifiHint').textContent=j.wifi_configured
+      ? 'Saved SSID: '+j.wifi_ssid
+      : 'Required for hourly ingest to the server.';
     if(!intervalsLoaded){
       document.getElementById('readMin').value=j.read_interval_min;
       document.getElementById('ingestMin').value=j.ingest_interval_min;
@@ -127,10 +167,9 @@ async function refresh(){
     document.getElementById('wet').textContent=j.draft_wet>=0?j.draft_wet:j.adc_wet;
     document.getElementById('pct').textContent=j.preview_pct.toFixed(1)+'%';
     const busy=j.capturing;
-    document.getElementById('btnDry').disabled=busy;
-    document.getElementById('btnWet').disabled=busy;
-    document.getElementById('btnApply').disabled=busy;
-    document.getElementById('btnIntervals').disabled=busy;
+    ['btnDry','btnWet','btnApply','btnIntervals','btnWifi'].forEach(id=>{
+      document.getElementById(id).disabled=busy;
+    });
     if(busy){
       document.getElementById('timer').textContent='Capturing '+j.mode+'… '+(j.remain_s)+'s left (avg so far '+j.running_avg+')';
     }else{
@@ -148,6 +187,20 @@ async function apply(){
   const r=await fetch('/api/apply',{method:'POST'});
   const j=await r.json();
   if(!j.ok) document.getElementById('err').textContent=j.error||'Apply failed';
+  refresh();
+}
+async function applyWifi(){
+  document.getElementById('err').textContent='';
+  const ssid=encodeURIComponent(document.getElementById('ssid').value);
+  const pass=encodeURIComponent(document.getElementById('wpass').value);
+  const r=await fetch('/api/wifi?ssid='+ssid+'&pass='+pass,{method:'POST'});
+  const j=await r.json();
+  if(!j.ok){
+    document.getElementById('err').textContent=j.error||'Wi‑Fi apply failed';
+  }else{
+    wifiLoaded=false;
+    document.getElementById('wpass').value='';
+  }
   refresh();
 }
 async function applyIntervals(){
@@ -201,7 +254,11 @@ static void handleStatus() {
   String json = "{";
   json += "\"initiated\":";
   json += calibIsInitiated() ? "true" : "false";
-  json += ",\"adc_dry\":";
+  json += ",\"wifi_configured\":";
+  json += wifiCredsConfigured() ? "true" : "false";
+  json += ",\"wifi_ssid\":\"";
+  json += jsonEscape(wifiCredsSsid());
+  json += "\",\"adc_dry\":";
   json += String(calibAdcDry());
   json += ",\"adc_wet\":";
   json += String(calibAdcWet());
@@ -228,7 +285,7 @@ static void handleStatus() {
   json += ",\"batch_count\":";
   json += String((unsigned)calibBatchCount());
   json += ",\"message\":\"";
-  json += gMessage;
+  json += jsonEscape(gMessage);
   json += "\",\"error\":\"\"}";
   server.send(200, "application/json", json);
 }
@@ -276,11 +333,30 @@ static void handleApply() {
   server.send(200, "application/json", "{\"ok\":true}");
 }
 
+static void handleWifi() {
+  touchActivity();
+  if (!server.hasArg("ssid")) {
+    server.send(400, "application/json",
+                "{\"ok\":false,\"error\":\"ssid required\"}");
+    return;
+  }
+  const String ssid = server.arg("ssid");
+  const String pass = server.hasArg("pass") ? server.arg("pass") : "";
+  if (!wifiCredsApply(ssid, pass)) {
+    server.send(400, "application/json",
+                "{\"ok\":false,\"error\":\"invalid SSID/password\"}");
+    return;
+  }
+  gMessage = "Wi-Fi saved";
+  server.send(200, "application/json", "{\"ok\":true}");
+}
+
 static void handleIntervals() {
   touchActivity();
   if (!server.hasArg("read_min") || !server.hasArg("ingest_min")) {
-    server.send(400, "application/json",
-                "{\"ok\":false,\"error\":\"read_min and ingest_min required\"}");
+    server.send(
+        400, "application/json",
+        "{\"ok\":false,\"error\":\"read_min and ingest_min required\"}");
     return;
   }
   const int readMin = server.arg("read_min").toInt();
@@ -316,12 +392,9 @@ static void finishCapture() {
 
 static void captureTick() {
   if (gMode == CAP_NONE) {
-    // Idle live peek: brief powered read occasionally is heavy; keep VCC off
-    // and do a full damped read every status poll path instead via timer.
     return;
   }
   const uint32_t elapsed = millis() - gCaptureStartMs;
-  // Sample ~every 50ms while powered.
   static uint32_t lastSampleMs = 0;
   if (millis() - lastSampleMs < 50) {
     return;
@@ -368,13 +441,14 @@ void calibPortalRun() {
   char ssid[32];
   snprintf(ssid, sizeof(ssid), "Moisture-%02X%02X", mac[4], mac[5]);
   WiFi.softAP(ssid);
-  Serial.printf("Calib SoftAP \"%s\"  http://%s/\n", ssid,
+  Serial.printf("Setup SoftAP \"%s\"  http://%s/\n", ssid,
                 WiFi.softAPIP().toString().c_str());
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/api/status", HTTP_GET, handleStatus);
   server.on("/api/capture", HTTP_POST, handleCapture);
   server.on("/api/apply", HTTP_POST, handleApply);
+  server.on("/api/wifi", HTTP_POST, handleWifi);
   server.on("/api/intervals", HTTP_POST, handleIntervals);
   server.on("/api/exit", HTTP_POST, handleExit);
   server.begin();
@@ -384,7 +458,7 @@ void calibPortalRun() {
     captureTick();
     idleLiveTick();
     if ((millis() - gLastActivityMs) > kIdleTimeoutMs) {
-      Serial.println("Calib portal idle timeout");
+      Serial.println("Setup portal idle timeout");
       break;
     }
     delay(2);
@@ -398,5 +472,5 @@ void calibPortalRun() {
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_OFF);
   ledSetWifiActive(false);
-  Serial.println("Calib portal exited");
+  Serial.println("Setup portal exited");
 }

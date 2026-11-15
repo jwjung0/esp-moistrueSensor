@@ -4,6 +4,7 @@
 #include "led.h"
 #include "moisture_sensor.h"
 #include "sample_store.h"
+#include "wifi_creds.h"
 #include "wifi_upload.h"
 
 #include <Arduino.h>
@@ -87,10 +88,16 @@ void setup() {
   ledBegin();
   moistureSensorBegin();
   calibStoreBegin();
+  wifiCredsBegin();
   sampleStoreBegin();
 
-  if (bootHeldForCalib()) {
-    Serial.println("BOOT held — calibration portal");
+  // SoftAP on BOOT hold, or automatically when home Wi‑Fi is not set yet.
+  if (bootHeldForCalib() || !wifiCredsConfigured()) {
+    if (!wifiCredsConfigured()) {
+      Serial.println("WiFi not configured — opening SoftAP portal");
+    } else {
+      Serial.println("BOOT held — SoftAP portal");
+    }
     calibPortalRun();
     sampleStoreSyncCapacity();
     sampleStoreReset();
