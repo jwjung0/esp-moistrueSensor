@@ -7,6 +7,7 @@
 compile_commands.json
 .cache/
 
-# Secrets / deploy config (copy from *.example)
+# Secrets / deploy config (create locally; never commit)
 include/config_local.h
 include/config_prod.h
+include/config_*.h.example

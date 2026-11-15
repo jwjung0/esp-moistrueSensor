@@ -18,11 +18,12 @@ Board: `esp32-c3-devkitm-1` (C3 SuperMini / DevKit). Sensor: Capacitive Soil Moi
 
 ## Setup
 
-```bash
-cp include/config_local.h.example include/config_local.h
-cp include/config_prod.h.example include/config_prod.h
-# Edit WIFI_*, INGEST_URL, DEVICE_ID, DEVICE_INGEST_TOKEN
-```
+Create gitignored `include/config_local.h` and/or `include/config_prod.h` with:
+
+- `WIFI_SSID`, `WIFI_PASS`
+- `INGEST_URL` — e.g. `http://<host>:8110/api/moisture/ingest`
+- `DEVICE_ID`, `DEVICE_INGEST_TOKEN`
+- `ADC_DRY_DEFAULT`, `ADC_WET_DEFAULT` (fallback until portal Apply)
 
 ```bash
 pio run -e esp32c3_local -t upload
