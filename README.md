@@ -6,15 +6,30 @@ Server/TDB moisture storage is deferred — firmware posts the contract below; e
 
 ## Hardware
 
-| Signal | Pin |
-|--------|-----|
-| Blue LED (on while Wi‑Fi/SoftAP active) | GPIO **8** |
-| Sensor AOUT | GPIO **4** |
-| Sensor VCC (GPIO-powered only while reading) | GPIO **3** |
-| Sensor GND | GND |
-| Enter calib | Hold **BOOT** (GPIO 9) ~2 s at wake |
+| Signal                                       | Pin                                 |
+| -------------------------------------------- | ----------------------------------- |
+| Blue LED (on while Wi‑Fi/SoftAP active)      | GPIO **8**                          |
+| Sensor AOUT                                  | GPIO **4**                          |
+| Sensor VCC (GPIO-powered only while reading) | GPIO **3**                          |
+| Sensor GND                                   | GND                                 |
+| Enter calib                                  | Hold **BOOT** (GPIO 9) ~2 s at wake |
 
 Board: `esp32-c3-devkitm-1` (C3 SuperMini / DevKit). Sensor: Capacitive Soil Moisture Sensor v2.0 (3-pin).
+
+## Power
+
+- **Battery**: 1000 mAh Li-ion/LiPo
+- **Charge / boost**: TP4056 (USB 5 V in) → cell → DC‑DC boost to **5 V** → board `5V` pin
+
+### Estimated current (default 10 min / 60 min)
+
+| State                     | Current                       | Duty        |
+| ------------------------- | ----------------------------- | ----------- |
+| Deep sleep (board @ 5 V)  | ~0.7 mA                       | ~99.6%      |
+| Sample (sensor on ~0.4 s) | ~20–25 mA                     | 6×/h        |
+| Wi‑Fi ingest              | ~80 mA avg (TX peaks ~300 mA) | ~5–10 s / h |
+
+**Average ≈ 0.9–1.2 mA** → ~**3–6 weeks** on 1000 mAh. Sleep dominates; failed uploads (retry every 10 min) cut life toward ~2 weeks. SoftAP portal holds ~80 mA while open.
 
 ## Setup
 
@@ -48,14 +63,15 @@ On each read: VCC on → 300 ms settle → discard 4 samples → trimmed mean of
 
 Opens automatically if home Wi‑Fi is not configured yet, or when you hold **BOOT** ~2 s at wake.
 
-1. Join SoftAP `Moisture-XXXX`, open `http://192.168.4.1/`.
-2. **Home Wi‑Fi**: enter SSID/password → **Apply Wi‑Fi** (needed so the device can reach the ingest server on your LAN).
-3. **Intervals**: read / ingest minutes (defaults 10 / 60) → **Apply intervals**.
-4. If calib never Applied: banner **“Calibration not set…”**.
-5. **Calibrate Dry** / **Wet** (20 s each) → **Apply calibration**.
-6. **Exit** → resume duty cycle.
+1. On the phone, **connect** to SoftAP `Moisture-XXXX` (**open**, no password; `XXXX` = last 2 MAC bytes). Selecting the SSID alone is not enough — wait until it shows Connected / no internet.
+2. Open the setup page: phone may show **Sign in to network**, or manually open `http://192.168.4.1/` in the browser. Stay on this Wi‑Fi (“use without internet” if asked).
+3. **Home Wi‑Fi**: tap **Scan networks**, pick SSID, enter password → **Apply Wi‑Fi** (needed so the device can reach the ingest server on your LAN).
+4. **Intervals**: read / ingest minutes (defaults 10 / 60) → **Apply intervals**.
+5. If calib never Saved: banner **“Calibration not set…”**.
+6. **Calibration** panel: **Dry** / **Wet** (20 s each; button locks to Completed). **Save** (both required) writes NVS. **Recalibrate** unlocks Dry/Wet again (NVS unchanged until Save).
+7. **Exit** → resume duty cycle.
 
-SoftAP is only for phone setup. Hourly ingest uses home Wi‑Fi (STA).
+SoftAP stages: **before** home Wi‑Fi is saved → SoftAP opens automatically. **After** Wi‑Fi is saved → SoftAP only on **BOOT** hold (~2 s within ~5 s of wake). Idle exit after **3 min** with no phone joined; stays up while a client is connected. Hourly ingest uses home Wi‑Fi (STA).
 
 ## Ingest contract
 

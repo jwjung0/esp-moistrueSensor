@@ -13,21 +13,33 @@
 #include <time.h>
 
 static const uint32_t kBootHoldMs = 2000;
+static const uint32_t kBootWindowMs = 5000;
 static const float kHysteresisPct = 1.0f;
 
+// After Wi‑Fi is saved, SoftAP only opens via BOOT. Allow a short post-wake
+// window so the hold does not have to start before the chip finishes booting.
 static bool bootHeldForCalib() {
   pinMode(BOARD_BOOT_PIN, INPUT_PULLUP);
-  // BOOT is active-low on ESP32-C3.
-  if (digitalRead(BOARD_BOOT_PIN) != LOW) {
-    return false;
-  }
-  const uint32_t start = millis();
-  while (digitalRead(BOARD_BOOT_PIN) == LOW) {
-    if ((millis() - start) >= kBootHoldMs) {
-      return true;
+  Serial.printf("Hold BOOT %lus within %lus to open SoftAP…\n",
+                (unsigned long)(kBootHoldMs / 1000UL),
+                (unsigned long)(kBootWindowMs / 1000UL));
+  const uint32_t windowStart = millis();
+  uint32_t heldStart = 0;
+  while ((millis() - windowStart) < kBootWindowMs) {
+    if (digitalRead(BOARD_BOOT_PIN) == LOW) {
+      if (heldStart == 0) {
+        heldStart = millis();
+        Serial.println("BOOT pressed…");
+      }
+      if ((millis() - heldStart) >= kBootHoldMs) {
+        return true;
+      }
+    } else {
+      heldStart = 0;
     }
     delay(10);
   }
+  Serial.println("No BOOT hold — skip SoftAP");
   return false;
 }
 
@@ -91,12 +103,15 @@ void setup() {
   wifiCredsBegin();
   sampleStoreBegin();
 
-  // SoftAP on BOOT hold, or automatically when home Wi‑Fi is not set yet.
-  if (bootHeldForCalib() || !wifiCredsConfigured()) {
-    if (!wifiCredsConfigured()) {
+  // Stage A: no home Wi‑Fi yet → SoftAP always.
+  // Stage B: Wi‑Fi already saved → SoftAP only if BOOT held (re-setup).
+  const bool needPortal = !wifiCredsConfigured();
+  const bool bootPortal = needPortal ? false : bootHeldForCalib();
+  if (needPortal || bootPortal) {
+    if (needPortal) {
       Serial.println("WiFi not configured — opening SoftAP portal");
     } else {
-      Serial.println("BOOT held — SoftAP portal");
+      Serial.println("BOOT held — SoftAP portal (WiFi already saved)");
     }
     calibPortalRun();
     sampleStoreSyncCapacity();
