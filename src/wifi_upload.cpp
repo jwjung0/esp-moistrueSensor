@@ -120,3 +120,33 @@ bool wifiUploadBatch() {
   radioOff();
   return ok;
 }
+
+bool wifiHealthCheck() {
+  Serial.println("health: WiFi + ingest endpoint");
+  ledSetWifiActive(true);
+
+  if (!connectSta()) {
+    radioOff();
+    return false;
+  }
+
+  (void)syncNtp();
+
+  Serial.printf("health: GET %s\n", INGEST_URL);
+  HTTPClient http;
+  http.setTimeout(8000);
+  http.begin(INGEST_URL);
+  const int code = http.GET();
+  http.end();
+
+  // Any HTTP response means the host answered (2xx/401/404/405 all OK).
+  const bool reachable = code > 0;
+  if (reachable) {
+    Serial.printf("health: endpoint reachable status=%d\n", code);
+  } else {
+    Serial.printf("health: endpoint unreachable status=%d\n", code);
+  }
+
+  radioOff();
+  return reachable;
+}

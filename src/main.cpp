@@ -14,6 +14,7 @@
 
 static const uint32_t kBootHoldMs = 2000;
 static const uint32_t kBootWindowMs = 5000;
+static const uint32_t kBootDiagMs = 60000;
 static const float kHysteresisPct = 1.0f;
 
 // After Wi‑Fi is saved, SoftAP only opens via BOOT. Allow a short post-wake
@@ -91,6 +92,45 @@ static void goDeepSleep() {
   esp_deep_sleep_start();
 }
 
+// Cold-boot only: print NVS/sensor state, optional API health, stay awake
+// so USB-CDC serial can attach before deep sleep.
+static void bootDiagnostics() {
+  const uint32_t start = millis();
+  Serial.println("--- boot diagnostics ---");
+
+  Serial.printf("wifi configured=%d", wifiCredsConfigured() ? 1 : 0);
+  if (wifiCredsConfigured()) {
+    Serial.printf(" ssid=%s", wifiCredsSsid().c_str());
+  }
+  Serial.println();
+  Serial.printf("calib initiated=%d dry=%d wet=%d\n",
+                calibIsInitiated() ? 1 : 0, calibAdcDry(), calibAdcWet());
+  Serial.printf("intervals read=%dm ingest=%dm batch=%u\n",
+                calibReadIntervalMin(), calibIngestIntervalMin(),
+                (unsigned)calibBatchCount());
+  Serial.printf("ring count=%u/%u\n", (unsigned)sampleStoreCount(),
+                (unsigned)sampleStoreCapacity());
+
+  const int raw = moistureSensorReadRaw();
+  const float pct = moistureSensorRawToPct(raw, calibAdcDry(), calibAdcWet());
+  Serial.printf("sensor raw=%d pct=%.2f (not stored)\n", raw, pct);
+
+  if (wifiCredsConfigured()) {
+    (void)wifiHealthCheck();
+  } else {
+    Serial.println("health: skip — WiFi not configured");
+  }
+
+  while ((millis() - start) < kBootDiagMs) {
+    const uint32_t remainingMs = kBootDiagMs - (millis() - start);
+    Serial.printf("diag remaining %lus\n",
+                  (unsigned long)((remainingMs + 999UL) / 1000UL));
+    const uint32_t chunk = remainingMs < 5000UL ? remainingMs : 5000UL;
+    delay(chunk);
+  }
+  Serial.println("--- boot diagnostics done ---");
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
@@ -107,6 +147,7 @@ void setup() {
   // Stage B: Wi‑Fi already saved → SoftAP only if BOOT held (re-setup).
   const bool needPortal = !wifiCredsConfigured();
   const bool bootPortal = needPortal ? false : bootHeldForCalib();
+  bool portalRan = false;
   if (needPortal || bootPortal) {
     if (needPortal) {
       Serial.println("WiFi not configured — opening SoftAP portal");
@@ -116,6 +157,14 @@ void setup() {
     calibPortalRun();
     sampleStoreSyncCapacity();
     sampleStoreReset();
+    portalRan = true;
+  }
+
+  // Cold boot / reset only: stay awake ~60 s for serial diagnostics.
+  // Skip on timer wake (battery) and when SoftAP already ran this boot.
+  const bool timerWake = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
+  if (!timerWake && !portalRan) {
+    bootDiagnostics();
   }
 
   takeSample();

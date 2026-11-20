@@ -53,6 +53,8 @@ Defaults: **read every 10 min**, **ingest every 60 min** (batch of 6). Both are 
 2. If ring not full → deep sleep for the read interval.
 3. If full → LED on → Wi‑Fi STA → NTP → `POST` full batch → LED/Wi‑Fi off → clear ring on success → deep sleep.
 
+**Cold boot / reset** (not timer wake): if SoftAP did not open, the node stays awake ~**60 s**, prints NVS + sensor state, and runs a Wi‑Fi + ingest `GET` health check so USB serial can attach before deep sleep. Timer wakes skip this window.
+
 First upload waits until one full batch has accumulated. Ingest must be a multiple of read; batch size ≤ 24.
 
 ### ADC damping
